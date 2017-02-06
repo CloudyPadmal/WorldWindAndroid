@@ -33,6 +33,7 @@ import gov.nasa.worldwind.ogc.gpkg.GpkgTileMatrixSet;
 import gov.nasa.worldwind.ogc.gpkg.GpkgTileUserMetrics;
 import gov.nasa.worldwind.ogc.wms.WmsCapabilities;
 import gov.nasa.worldwind.ogc.wms.WmsLayer;
+import gov.nasa.worldwind.ogc.wmts.CompositorTileFactory;
 import gov.nasa.worldwind.ogc.wmts.OwsDcp;
 import gov.nasa.worldwind.ogc.wmts.OwsOperation;
 import gov.nasa.worldwind.ogc.wmts.OwsOperationsMetadata;
@@ -68,7 +69,7 @@ public class LayerFactory {
 
     protected List<String> compatibleImageFormats = Arrays.asList("image/png", "image/jpg", "image/jpeg", "image/gif", "image/bmp");
 
-    protected List<String> compatibleCoordinateSystems = Arrays.asList("urn:ogc:def:crs:OGC:1.3:CRS84", "urn:ogc:def:crs:EPSG::4326", "http://www.opengis.net/def/crs/OGC/1.3/CRS84");
+    protected List<String> compatibleCoordinateSystems = Arrays.asList("urn:ogc:def:crs:OGC:1.3:CRS84", "urn:ogc:def:crs:EPSG::4326", "http://www.opengis.net/def/crs/OGC/1.3/CRS84", "urn:ogc:def:crs:EPSG::3857", "urn:ogc:def:crs:EPSG:6.18:3:3857");
 
     public Layer createFromGeoPackage(String pathName, Callback callback) {
         if (pathName == null) {
@@ -396,19 +397,44 @@ public class LayerFactory {
             }
 
             // Search the list of coordinate system compatible tile matrix sets for compatible tiling schemes
-            CompatibleTileMatrixSet compatibleTileMatrixSet = this.determineTileSchemeCompatibleTileMatrixSet(wmtsLayer.getCapabilities(), compatibleTileMatrixSets);
-            if (compatibleTileMatrixSet == null) {
-                throw new RuntimeException(
-                    Logger.makeMessage("LayerFactory", "createWmtsLayer", "Tile Schemes Not Compatible"));
-            }
+//            CompatibleTileMatrixSet compatibleTileMatrixSet = this.determineTileSchemeCompatibleTileMatrixSet(wmtsLayer.getCapabilities(), compatibleTileMatrixSets);
+//            if (compatibleTileMatrixSet == null) {
+//                throw new RuntimeException(
+//                    Logger.makeMessage("LayerFactory", "createWmtsLayer", "Tile Schemes Not Compatible"));
+//            }
 
-            TileFactory tileFactory = this.createWmtsTileFactory(wmtsLayer, compatibleTileMatrixSet);
-            if (tileFactory == null) {
-                throw new RuntimeException(
-                    Logger.makeMessage("LayerFactory", "createWmtsLayer", "Unable to create TileFactory"));
-            }
+//            TileFactory tileFactory = this.createWmtsTileFactory(wmtsLayer, compatibleTileMatrixSet);
+//            if (tileFactory == null) {
+//                throw new RuntimeException(
+//                    Logger.makeMessage("LayerFactory", "createWmtsLayer", "Unable to create TileFactory"));
+//            }
+            String baseUrl = this.determineKvpUrl(wmtsLayer);
+            String template = null;
+            if (baseUrl != null) {
+                String imageFormat = null;
+                for (String compatibleImageFormat : this.compatibleImageFormats) {
+                    if (wmtsLayer.getFormats().contains(compatibleImageFormat)) {
+                        imageFormat = compatibleImageFormat;
+                        break;
+                    }
+                }
+                if (imageFormat == null) {
+                    throw new RuntimeException(
+                        Logger.makeMessage("LayerFactory", "getWmtsTileFactory", "Image Formats Not Compatible"));
+                }
 
-            LevelSet levelSet = this.createWmtsLevelSet(wmtsLayer, compatibleTileMatrixSet);
+                String styleIdentifier = wmtsLayer.getStyles().get(0).getIdentifier();
+                if (styleIdentifier == null) {
+                    throw new RuntimeException(
+                        Logger.makeMessage("LayerFactory", "getWmtsTileFactory", "No Style Identifier"));
+                }
+                template = this.buildWmtsKvpTemplate(baseUrl, wmtsLayer.getIdentifier(), imageFormat, styleIdentifier, compatibleTileMatrixSets.get(0));
+            } else {
+                template = wmtsLayer.getResourceUrls().get(0).getTemplate();
+            }
+            TileFactory tileFactory = new CompositorTileFactory(wmtsLayer, wmtsLayer.getCapabilities().getTileMatrixSet(compatibleTileMatrixSets.get(0)), template);
+
+            LevelSet levelSet = this.createWmtsLevelSet(wmtsLayer, 15);
 
             final TiledSurfaceImage surfaceImage = new TiledSurfaceImage();
 
@@ -670,6 +696,20 @@ public class LayerFactory {
         int imageSize = tileMatrixSet.getTileMatrices().get(0).getTileHeight();
 
         return new LevelSet(boundingBox, 90.0, compatibleTileMatrixSet.tileMatrices.size(), imageSize, imageSize);
+    }
+
+    protected LevelSet createWmtsLevelSet(WmtsLayer wmtsLayer, int levels) {
+        Sector boundingBox = null;
+        OwsWgs84BoundingBox wgs84BoundingBox = wmtsLayer.getWgs84BoundingBox();
+        if (wgs84BoundingBox == null) {
+            Logger.logMessage(Logger.WARN, "LayerFactory", "createWmtsLevelSet", "WGS84BoundingBox not defined for layer: " + wmtsLayer.getIdentifier());
+        } else {
+            boundingBox = wgs84BoundingBox.getSector();
+        }
+
+        int imageSize = 256;
+
+        return new LevelSet(boundingBox, 90.0, levels, imageSize, imageSize);
     }
 
     protected String buildWmtsKvpTemplate(String kvpServiceAddress, String layer, String format, String styleIdentifier, String tileMatrixSet) {
